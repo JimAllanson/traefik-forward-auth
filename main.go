@@ -67,7 +67,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate cookie
-	valid, email, err := fw.ValidateCookie(r, c)
+	valid, email, roles, err := fw.ValidateCookie(r, c)
 	if !valid {
 		logger.Errorf("Invalid cookie: %v", err)
 		http.Error(w, "Not authorized", 401)
@@ -80,6 +80,16 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		logger.WithFields(logrus.Fields{
 			"email": email,
 		}).Errorf("Invalid email")
+		http.Error(w, "Not authorized", 401)
+		return
+	}
+
+	// Validate roles
+	valid = fw.ValidateJwtRoles(roles)
+	if !valid {
+		logger.WithFields(logrus.Fields{
+			"roles": roles,
+		}).Errorf("Missing roles")
 		http.Error(w, "Not authorized", 401)
 		return
 	}
@@ -128,11 +138,12 @@ func handleCallback(w http.ResponseWriter, r *http.Request, qs url.Values,
 	user, err := fw.GetUser(token)
 	if err != nil {
 		logger.Errorf("Error getting user: %s", err)
+		http.Error(w, "Not authorized", 401)
 		return
 	}
 
 	// Generate cookie
-	http.SetCookie(w, fw.MakeCookie(r, user.Email))
+	http.SetCookie(w, fw.MakeCookie(r, user.Email, user.Roles))
 	logger.WithFields(logrus.Fields{
 		"user": user.Email,
 	}).Infof("Generated auth cookie")
@@ -182,6 +193,8 @@ func main() {
 	prompt := flag.String("prompt", "", "Space separated list of OpenID prompt options")
 	logLevel := flag.String("log-level", "warn", "Log level: trace, debug, info, warn, error, fatal, panic")
 	logFormat := flag.String("log-format", "text", "Log format: text, json, pretty")
+	jwtRolesField := flag.String("jwt-roles-field", "", "Field in the JWT to look for a role, or array of roles")
+	jwtRequiredRole := flag.String("jwt-required-role", "", "Role name to match in JWT roles field")
 
 	flag.Parse()
 
@@ -212,6 +225,10 @@ func main() {
 	userUrl, err := url.Parse((oidcParams["userinfo_endpoint"].(string)))
 	if err != nil {
 		log.Fatal("unable to parse user url")
+	}
+
+	if *jwtRequiredRole != "" && *jwtRolesField == "" {
+		log.Fatal("jwtRolesField must be set if jwtRequiredRole is set")
 	}
 
 	// Parse lists
@@ -256,6 +273,9 @@ func main() {
 		Whitelist: whitelist,
 
 		Prompt: *prompt,
+
+		JwtRequiredRole: *jwtRequiredRole,
+		JwtRolesField:   *jwtRolesField,
 	}
 
 	// Attach handler

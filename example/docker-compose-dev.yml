@@ -1,48 +1,62 @@
 version: '3'
 
 services:
+
   traefik:
-    image: traefik
-    command: -c /traefik.toml
-    # command: -c /traefik.toml --logLevel=DEBUG
+    image: traefik:v2.2.7
+    restart: always
+    command:
+      - "--log.level=DEBUG"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entryPoints.web.address=:80"
     ports:
       - "8085:80"
       - "8086:8080"
     networks:
       - traefik
     volumes:
-      - ./traefik.toml:/traefik.toml
       - /var/run/docker.sock:/var/run/docker.sock
+    container_name: traefik
+    labels:
+      - traefik.http.services.traefik.loadbalancer.server.port=8080
+      - traefik.http.routers.traefik.rule=Host(`traefik.localhost`)
 
   whoami1:
     image: emilevauge/whoami
     networks:
       - traefik
     labels:
-      - "traefik.backend=whoami1"
       - "traefik.enable=true"
-      - "traefik.frontend.rule=Host:whoami.localhost.com"
+      - "traefik.http.routers.whoami.rule=Host(`whoami.localhost`)"
 
   whoami2:
     image: emilevauge/whoami
     networks:
       - traefik
     labels:
-      - "traefik.backend=whoami2"
       - "traefik.enable=true"
-      - "traefik.frontend.rule=Host:whoami.localhost.org"
+      - "traefik.http.routers.whoami2.rule=Host(`whoami2.localhost`)"
+      - "traefik.http.routers.whoami2.middlewares=traefik-forward-auth"
 
   traefik-forward-auth:
     build: ../
     environment:
-      - CLIENT_ID=test
-      - CLIENT_SECRET=test
-      - COOKIE_SECRET=something-random
+      - OIDC_ISSUER=http://example.com
+      - CLIENT_ID=traefik-forward-auth
+      - CLIENT_SECRET=secret
+      - SECRET=secret
       - COOKIE_SECURE=false
-      - COOKIE_DOMAINS=localhost.com
-      - AUTH_URL=http://auth.localhost.com:8085/_oauth
+      - LOG_LEVEL=debug
+      - JWT_REQUIRED_ROLE=member
+      - JWT_ROLES_FIELD=roles
     networks:
       - traefik
+    labels:
+      - "traefik.http.middlewares.traefik-forward-auth.forwardauth.address=http://traefik-forward-auth:4181"
+      - "traefik.http.middlewares.traefik-forward-auth.forwardauth.authResponseHeaders=X-Forwarded-User"
+      - "traefik.http.middlewares.traefik-forward-auth.forwardauth.trustForwardHeader=true"
+      - "traefik.http.services.traefik-forward-auth.loadbalancer.server.port=4181"
 
 networks:
   traefik:
